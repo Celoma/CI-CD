@@ -14,6 +14,9 @@ import { errorMiddleware } from "./middlewares/error.middleware";
 
 const app = express();
 
+// Ne pas divulguer le framework utilisé (en-tête X-Powered-By)
+app.disable("x-powered-by");
+
 /**
  * ==========================================
  * Global Middlewares
