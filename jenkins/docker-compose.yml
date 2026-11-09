@@ -1,0 +1,26 @@
+# ======================================================
+# Lancement du serveur Jenkins
+#   cd jenkins
+#   cp .env.example .env   (puis renseigner les valeurs)
+#   docker compose up -d --build
+# ======================================================
+services:
+  jenkins:
+    build: .
+    image: souverainrecrut-jenkins:latest
+    container_name: jenkins
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"     # Interface web
+      - "50000:50000"   # Agents Jenkins (JNLP)
+    # Donne à l'utilisateur "jenkins" l'accès au socket Docker de l'hôte
+    # (GID 0 sous Docker Desktop, GID du groupe "docker" sous Linux)
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  jenkins_home:

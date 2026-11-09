@@ -1,0 +1,11 @@
+configuration-as-code
+job-dsl
+cloudbees-folder
+workflow-aggregator
+workflow-multibranch
+git
+github
+credentials-binding
+pipeline-stage-view
+timestamper
+ws-cleanup

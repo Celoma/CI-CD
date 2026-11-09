@@ -1,0 +1,68 @@
+# ======================================================
+# Jenkins Configuration as Code (JCasC)
+# Les valeurs ${...} sont lues dans les variables d'environnement
+# du conteneur (fichier jenkins/.env).
+# ======================================================
+jenkins:
+  systemMessage: "Jenkins CI/CD - SouverainRecrut"
+  numExecutors: 2
+  mode: NORMAL
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "${JENKINS_URL:-http://localhost:8080/}"
+
+# Identifiants Docker Hub utilisés par le Jenkinsfile (credentialsId: dockerhub-credentials)
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - usernamePassword:
+              scope: GLOBAL
+              id: "dockerhub-credentials"
+              description: "Docker Hub - access token"
+              username: "${DOCKERHUB_USERNAME}"
+              password: "${DOCKERHUB_TOKEN}"
+              usernameSecret: false
+
+# Job multibranche : un pipeline par branche du dépôt Git.
+# Le scan périodique (toutes les 2 minutes) détecte les nouveaux commits
+# et déclenche automatiquement un build de la branche concernée.
+jobs:
+  - script: >
+      multibranchPipelineJob('souverainrecrut') {
+        displayName('SouverainRecrut CI/CD')
+        description('Pipeline CI/CD : build, tests, images Docker, push Docker Hub, déploiement')
+        branchSources {
+          git {
+            id('souverainrecrut-git')
+            remote('${GIT_REPO_URL}')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+        triggers {
+          periodicFolderTrigger {
+            interval('2m')
+          }
+        }
+        orphanedItemStrategy {
+          discardOldItems {
+            numToKeep(10)
+          }
+        }
+      }

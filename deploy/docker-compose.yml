@@ -1,0 +1,51 @@
+# ======================================================
+# Déploiement de SouverainRecrut à partir des images Docker Hub
+# Utilisé par l'étape "Deploy" du Jenkinsfile (branche main).
+#
+# Variables : BACKEND_IMAGE, FRONTEND_IMAGE, IMAGE_TAG (fournies par Jenkins),
+#             POSTGRES_PASSWORD, JWT_SECRET (à surcharger en production)
+# ======================================================
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: souverainrecrut
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-souverainrecrut}
+      POSTGRES_DB: souverainrecrut
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U souverainrecrut -d souverainrecrut"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${BACKEND_IMAGE:-souverainrecrut-backend}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      API_VERSION: v1
+      DATABASE_URL: postgresql://souverainrecrut:${POSTGRES_PASSWORD:-souverainrecrut}@db:5432/souverainrecrut
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      FRONTEND_URL: http://localhost:3000
+    # Applique les migrations Prisma puis démarre l'API
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+    ports:
+      - "4000:4000"
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-souverainrecrut-frontend}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  db_data:
