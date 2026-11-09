@@ -9,3 +9,6 @@ credentials-binding
 pipeline-stage-view
 timestamper
 ws-cleanup
+sonar
+junit
+coverage

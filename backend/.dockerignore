@@ -1,6 +1,14 @@
 node_modules
 dist
+coverage
+reports
+tests
+.scannerwork
+jest.config.js
+tsconfig.jest.json
 .env
+.env.*
+!.env.example
 *.log
 Dockerfile
 .dockerignore

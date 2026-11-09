@@ -1,9 +1,11 @@
 # ======================================================
-# Lancement du serveur Jenkins
-#   cd jenkins
+# Plateforme d'intégration continue : Jenkins + SonarQube
+#   cd integration-continue/jenkins
 #   cp .env.example .env   (puis renseigner les valeurs)
 #   docker compose up -d --build
 # ======================================================
+name: souverainrecrut-ci
+
 services:
   jenkins:
     build: .
@@ -21,6 +23,25 @@ services:
     volumes:
       - jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - sonarqube
+
+  sonarqube:
+    image: sonarqube:26.10.0.133078-community
+    container_name: sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      # Évite d'avoir à modifier vm.max_map_count de l'hôte (Docker Desktop / WSL2)
+      SONAR_SEARCH_JAVAADDITIONALOPTS: "-Dnode.store.allow_mmap=false"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
 
 volumes:
   jenkins_home:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:

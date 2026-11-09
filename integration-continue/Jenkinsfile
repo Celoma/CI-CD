@@ -1,0 +1,194 @@
+// ======================================================
+// Pipeline d'intégration continue - SouverainRecrut Backend
+// Déclenché à chaque commit (scan du job multibranche toutes les 2 min)
+//
+//  1. Checkout ........... récupération du commit, calcul du tag <version>-<sha>
+//  2. Install ............ npm ci
+//  3. Prisma generate .... génération du client Prisma
+//  4. Build .............. compilation TypeScript
+//  5. Tests .............. Jest + couverture (seuil 80 %), rapports JUnit / Cobertura / lcov
+//  6. SonarQube .......... analyse statique + couverture
+//  7. Quality Gate ....... attente du verdict SonarQube (échec => pipeline arrêté)
+//  8. Docker Build ....... image backend taguée <version>-<sha>
+//  9. Trivy .............. scan de l'image (CRITICAL corrigeable => échec)
+// 10. Push Docker Hub .... publication (branches Dev et main), uniquement si tout est vert
+// ======================================================
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    environment {
+        DOCKERHUB_CREDENTIALS = 'dockerhub-credentials'
+        IMAGE_NAME            = 'souverainrecrut-backend'
+        // Configuration Docker isolée par build (le login ne reste pas dans JENKINS_HOME)
+        DOCKER_CONFIG         = "${WORKSPACE}/.docker"
+        // Base de vulnérabilités Trivy conservée entre les builds
+        TRIVY_CACHE_DIR       = "${JENKINS_HOME}/.cache/trivy"
+        REPORTS               = "${WORKSPACE}/reports"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.APP_VERSION = sh(script: "node -p \"require('./backend/package.json').version\"", returnStdout: true).trim()
+                    env.GIT_SHORT   = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG   = "${env.APP_VERSION}-${env.GIT_SHORT}"
+
+                    withCredentials([usernamePassword(credentialsId: env.DOCKERHUB_CREDENTIALS,
+                                                      usernameVariable: 'DH_USER',
+                                                      passwordVariable: 'DH_TOKEN')]) {
+                        env.IMAGE = "${DH_USER}/${env.IMAGE_NAME}"
+                    }
+                }
+                sh 'mkdir -p "$REPORTS"'
+                echo "Branche ${env.BRANCH_NAME} - image ${env.IMAGE}:${env.IMAGE_TAG}"
+            }
+        }
+
+        stage('Install') {
+            steps {
+                dir('backend') {
+                    sh 'npm ci --no-audit --no-fund'
+                }
+            }
+        }
+
+        stage('Prisma generate') {
+            steps {
+                dir('backend') {
+                    sh 'npx prisma generate'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('backend') {
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                dir('backend') {
+                    // Échoue si un test échoue ou si la couverture < 80 % (coverageThreshold)
+                    sh 'npm run test:ci'
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'backend/reports/junit.xml'
+                    recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'backend/coverage/cobertura-coverage.xml']],
+                                   sourceDirectories: [[path: 'backend/src']])
+                }
+            }
+        }
+
+        stage('SonarQube') {
+            steps {
+                dir('backend') {
+                    withSonarQubeEnv('sonarqube') {
+                        sh '''
+                            sonar-scanner \
+                              -Dproject.settings=../integration-continue/sonar/sonar-project.properties \
+                              -Dsonar.projectVersion="$IMAGE_TAG"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    // Attend le webhook SonarQube ; un statut ERROR arrête le pipeline
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh '''
+                    docker build \
+                      --label org.opencontainers.image.version="$APP_VERSION" \
+                      --label org.opencontainers.image.revision="$GIT_COMMIT" \
+                      --label org.opencontainers.image.source="$GIT_URL" \
+                      -t "$IMAGE:$IMAGE_TAG" backend
+                '''
+            }
+        }
+
+        stage('Trivy') {
+            steps {
+                sh '''
+                    # Rapports complets (HIGH + CRITICAL) archivés avec le build
+                    trivy image --no-progress --scanners vuln --severity HIGH,CRITICAL \
+                      --format table --output "$REPORTS/trivy-image.txt" "$IMAGE:$IMAGE_TAG"
+                    trivy image --no-progress --skip-db-update --scanners vuln --severity HIGH,CRITICAL \
+                      --format json --output "$REPORTS/trivy-image.json" "$IMAGE:$IMAGE_TAG"
+                    cat "$REPORTS/trivy-image.txt"
+
+                    # Seuil bloquant : aucune vulnérabilité CRITICAL disposant d'un correctif
+                    trivy image --no-progress --skip-db-update --scanners vuln \
+                      --severity CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE:$IMAGE_TAG"
+                '''
+            }
+        }
+
+        stage('Push Docker Hub') {
+            when {
+                anyOf { branch 'Dev'; branch 'main' }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.DOCKERHUB_CREDENTIALS,
+                                                  usernameVariable: 'DH_USER',
+                                                  passwordVariable: 'DH_TOKEN')]) {
+                    sh 'echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin'
+                }
+                sh '''
+                    docker push "$IMAGE:$IMAGE_TAG"
+                    docker tag  "$IMAGE:$IMAGE_TAG" "$IMAGE:latest"
+                    docker push "$IMAGE:latest"
+                '''
+            }
+            post {
+                always {
+                    sh 'docker logout || true'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                cp backend/reports/junit.xml "$REPORTS/" 2>/dev/null || true
+                cp backend/coverage/lcov.info backend/coverage/cobertura-coverage.xml "$REPORTS/" 2>/dev/null || true
+                cp backend/.scannerwork/report-task.txt "$REPORTS/sonar-report-task.txt" 2>/dev/null || true
+            '''
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            sh '''
+                docker rmi "$IMAGE:$IMAGE_TAG" "$IMAGE:latest" 2>/dev/null || true
+                docker image prune -f || true
+            '''
+            cleanWs()
+        }
+        success {
+            echo "Image publiée / validée : ${env.IMAGE}:${env.IMAGE_TAG}"
+        }
+        failure {
+            echo 'Pipeline en échec : consulter l\'étape en rouge (tests, Quality Gate ou Trivy)'
+        }
+    }
+}

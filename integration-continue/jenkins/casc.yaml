@@ -1,10 +1,10 @@
 # ======================================================
 # Jenkins Configuration as Code (JCasC)
 # Les valeurs ${...} sont lues dans les variables d'environnement
-# du conteneur (fichier jenkins/.env).
+# du conteneur (fichier integration-continue/jenkins/.env).
 # ======================================================
 jenkins:
-  systemMessage: "Jenkins CI/CD - SouverainRecrut"
+  systemMessage: "Jenkins CI - SouverainRecrut Backend"
   numExecutors: 2
   mode: NORMAL
 
@@ -23,27 +23,41 @@ unclassified:
   location:
     url: "${JENKINS_URL:-http://localhost:8080/}"
 
-# Identifiants Docker Hub utilisés par le Jenkinsfile (credentialsId: dockerhub-credentials)
+  # Serveur SonarQube utilisé par withSonarQubeEnv('sonarqube')
+  sonarGlobalConfiguration:
+    buildWrapperEnabled: true
+    installations:
+      - name: "sonarqube"
+        serverUrl: "http://sonarqube:9000"
+        credentialsId: "sonar-token"
+
 credentials:
   system:
     domainCredentials:
       - credentials:
+          # Docker Hub (credentialsId: dockerhub-credentials)
           - usernamePassword:
               scope: GLOBAL
               id: "dockerhub-credentials"
-              description: "Docker Hub - access token"
+              description: "Docker Hub"
               username: "${DOCKERHUB_USERNAME}"
               password: "${DOCKERHUB_TOKEN}"
               usernameSecret: false
+          # Token d'analyse SonarQube (généré par sonar/setup-sonarqube.sh)
+          - string:
+              scope: GLOBAL
+              id: "sonar-token"
+              description: "SonarQube - token d'analyse"
+              secret: "${SONAR_TOKEN}"
 
-# Job multibranche : un pipeline par branche du dépôt Git.
+# Job multibranche : un pipeline par branche du dépôt Git (dont Dev).
 # Le scan périodique (toutes les 2 minutes) détecte les nouveaux commits
 # et déclenche automatiquement un build de la branche concernée.
 jobs:
   - script: >
-      multibranchPipelineJob('souverainrecrut') {
-        displayName('SouverainRecrut CI/CD')
-        description('Pipeline CI/CD : build, tests, images Docker, push Docker Hub, déploiement')
+      multibranchPipelineJob('souverainrecrut-backend') {
+        displayName('SouverainRecrut Backend - CI')
+        description('Tests, SonarQube, image Docker, Trivy, publication Docker Hub')
         branchSources {
           git {
             id('souverainrecrut-git')
@@ -52,7 +66,7 @@ jobs:
         }
         factory {
           workflowBranchProjectFactory {
-            scriptPath('Jenkinsfile')
+            scriptPath('integration-continue/Jenkinsfile')
           }
         }
         triggers {

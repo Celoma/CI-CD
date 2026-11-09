@@ -23,8 +23,23 @@ RUN apt-get update \
 
 # --- Node.js 22 (dépôt NodeSource) ---
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends nodejs unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# --- SonarScanner CLI (utilise le JDK 21 de l'image Jenkins) ---
+ARG SONAR_SCANNER_VERSION=8.2.0.6438
+RUN curl -fsSL -o /tmp/sonar-scanner.zip \
+       "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}.zip" \
+    && unzip -q /tmp/sonar-scanner.zip -d /opt \
+    && ln -s "/opt/sonar-scanner-${SONAR_SCANNER_VERSION}/bin/sonar-scanner" /usr/local/bin/sonar-scanner \
+    && rm /tmp/sonar-scanner.zip
+
+# --- Trivy (scanner de vulnérabilités des images Docker) ---
+ARG TRIVY_VERSION=0.76.1
+RUN curl -fsSL -o /tmp/trivy.tgz \
+       "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+    && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
+    && rm /tmp/trivy.tgz
 
 USER jenkins
 
