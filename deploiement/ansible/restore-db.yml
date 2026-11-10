@@ -1,0 +1,68 @@
+# ======================================================
+# Restauration de la base PostgreSQL à partir d'une sauvegarde pg_dump
+# faite automatiquement par deploy.yml avant chaque migration.
+#   ansible-playbook -i inventories/staging restore-db.yml                    # liste les sauvegardes
+#   ansible-playbook -i inventories/staging restore-db.yml -e backup=<fichier.dump>
+#
+# À combiner avec rollback.yml quand une migration doit être annulée :
+#   1. rollback.yml (retour à l'image précédente)  2. restore-db.yml (schéma et données d'avant)
+# Les données écrites après la sauvegarde sont perdues : l'API est arrêtée
+# pendant la restauration, puis redémarrée et vérifiée.
+# ======================================================
+- name: Restaurer la base PostgreSQL
+  hosts: app
+  become: false
+
+  tasks:
+    - name: Lister les sauvegardes disponibles
+      ansible.builtin.shell: ls -1t {{ app_dir }}/backups/*.dump 2>/dev/null | xargs -r -n1 basename
+      register: backups
+      changed_when: false
+
+    - name: Sauvegardes disponibles (la plus récente en premier)
+      ansible.builtin.debug:
+        msg: "{{ backups.stdout_lines }}"
+      when: backup is not defined
+
+    - name: Arrêter si aucune sauvegarde n'est choisie
+      ansible.builtin.meta: end_host
+      when: backup is not defined
+
+    - name: Vérifier la sauvegarde choisie
+      ansible.builtin.assert:
+        that: backup | basename in backups.stdout_lines
+        fail_msg: "Sauvegarde {{ backup }} introuvable dans {{ app_dir }}/backups"
+        quiet: true
+
+    - name: Arrêter l'API pendant la restauration
+      ansible.builtin.command: docker compose stop backend
+      args: { chdir: "{{ app_dir }}" }
+      changed_when: true
+
+    - name: Restaurer la base (pg_restore --clean)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --single-transaction' \
+          < {{ app_dir }}/backups/{{ backup | basename }}
+      args: { chdir: "{{ app_dir }}", executable: /bin/bash }
+      changed_when: true
+
+    - name: Redémarrer l'API et attendre son healthcheck
+      ansible.builtin.command: docker compose up -d --wait --wait-timeout 120 backend
+      args: { chdir: "{{ app_dir }}" }
+      changed_when: true
+
+    - name: "Vérifier : GET /{{ api_version }}/ready (connexion à PostgreSQL)"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/ready"
+        status_code: 200
+      register: ready
+      retries: 10
+      delay: 3
+      until: ready.status == 200
+
+    - name: Journaliser la restauration
+      ansible.builtin.shell: >
+        echo "$(date -u +%FT%TZ) env={{ app_env }} statut=RESTAURATION-BASE
+        sauvegarde={{ backup | basename }} par={{ deployed_by }} pipeline={{ pipeline_url }}" >> {{ app_dir }}/deployments.log
+      changed_when: true

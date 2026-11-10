@@ -6,6 +6,8 @@ api_port: 4000
 api_version: v1
 postgres_db: souverainrecrut
 postgres_user: souverainrecrut
+# Sauvegardes pg_dump faites avant chaque migration (dossier backups/ du serveur)
+backup_retention: 10
 # Traçabilité (renseignées par le pipeline GitLab)
 git_commit: "inconnu"
 deployed_by: "{{ lookup('env', 'USER') | default('manuel', true) }}"

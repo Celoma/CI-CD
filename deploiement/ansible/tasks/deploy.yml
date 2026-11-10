@@ -16,6 +16,12 @@
     dest: "{{ app_dir }}/docker-compose.yml"
     mode: "0640"
 
+- name: Créer le dossier des sauvegardes de la base
+  ansible.builtin.file:
+    path: "{{ app_dir }}/backups"
+    state: directory
+    mode: "0700"
+
 - name: Déployer, puis valider par des smoke tests
   block:
     - name: Générer la configuration de l'environnement (.env, secrets compris)
@@ -33,6 +39,25 @@
       ansible.builtin.command: docker compose up -d --wait postgres
       args: { chdir: "{{ app_dir }}" }
       changed_when: true
+
+    # Le rollback ne revient que sur l'image : cette sauvegarde permet de
+    # restaurer aussi les données et le schéma (restore-db.yml)
+    - name: Sauvegarder la base avant migration (pg_dump)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        f="{{ app_dir }}/backups/$(date -u +%Y%m%dT%H%M%SZ)_{{ current_tag or 'initial' }}_avant_{{ deploy_tag }}.dump"
+        docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$f"
+        test -s "$f" && chmod 600 "$f" && echo "$f"
+      args: { chdir: "{{ app_dir }}", executable: /bin/bash }
+      register: backup
+      changed_when: true
+
+    - name: Ne garder que les {{ backup_retention }} dernières sauvegardes
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ls -1t {{ app_dir }}/backups/*.dump | tail -n +{{ backup_retention | int + 1 }} | xargs -r rm -f --
+      args: { executable: /bin/bash }
+      changed_when: false
 
     - name: Appliquer les migrations Prisma (prisma migrate deploy)
       ansible.builtin.command: docker compose run --rm migrate
@@ -127,7 +152,8 @@
   ansible.builtin.shell: >
     echo "$(date -u +%FT%TZ) env={{ app_env }} tag={{ deploy_tag }}
     statut={{ 'ROLLBACK' if rollback_mode else 'OK' }} digest={{ digest.stdout | regex_replace('^.*@', '') }}
-    precedent={{ current_tag or 'aucun' }} commit={{ git_commit }} par={{ deployed_by }}
+    precedent={{ current_tag or 'aucun' }} sauvegarde={{ (backup.stdout | default('') | basename) or 'aucune' }}
+    commit={{ git_commit }} par={{ deployed_by }}
     pipeline={{ pipeline_url }}" >> {{ app_dir }}/deployments.log
   changed_when: true
 
