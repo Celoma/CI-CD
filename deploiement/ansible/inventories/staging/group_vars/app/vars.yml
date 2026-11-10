@@ -1,0 +1,5 @@
+# Configuration propre à l'environnement staging (les secrets sont dans vault.yml, chiffré)
+app_env: staging
+frontend_url: "http://localhost:5173"
+postgres_password: "{{ vault_postgres_password }}"
+jwt_secret: "{{ vault_jwt_secret }}"

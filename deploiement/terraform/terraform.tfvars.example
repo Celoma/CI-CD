@@ -1,0 +1,4 @@
+# Copier en terraform.tfvars et adapter les chemins
+vm_dir              = "C:/Users/VOTRE_UTILISATEUR/Documents/Virtual Machines"
+template_vmx        = "C:/Users/VOTRE_UTILISATEUR/Documents/Virtual Machines/ubuntu-2404-template/ubuntu-2404-template.vmx"
+ssh_public_key_path = "~/.ssh/souverainrecrut_deploy.pub"

@@ -1,0 +1,22 @@
+# ======================================================
+# GitLab Runner local (exécuteur Docker) pour le projet de déploiement.
+# gitlab.com ne peut pas joindre les VM du réseau privé VMware : le runner
+# tourne donc sur le poste, à côté des VM, et récupère les jobs auprès de gitlab.com.
+#
+#   docker compose up -d
+#   ./register.sh          # enregistrement (jeton du runner dans RUNNER_TOKEN)
+# ======================================================
+name: souverainrecrut-runner
+
+services:
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine-v19.4.2
+    container_name: gitlab-runner
+    restart: unless-stopped
+    volumes:
+      - gitlab-runner-config:/etc/gitlab-runner
+      # Les jobs tournent dans des conteneurs lancés par le Docker du poste
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  gitlab-runner-config:

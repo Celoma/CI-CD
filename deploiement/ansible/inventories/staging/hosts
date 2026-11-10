@@ -1,0 +1,10 @@
+# Généré par Terraform (deploiement/terraform) - ne pas modifier à la main
+[staging]
+souverainrecrut-staging ansible_host=192.168.235.129
+
+[app:children]
+staging
+
+[app:vars]
+ansible_user=deploy
+ansible_python_interpreter=/usr/bin/python3

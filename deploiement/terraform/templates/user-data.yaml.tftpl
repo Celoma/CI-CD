@@ -1,0 +1,26 @@
+#cloud-config
+# Configuration initiale de la VM (exécutée par cloud-init au premier démarrage)
+hostname: ${hostname}
+preserve_hostname: false
+
+users:
+  - name: ${admin_user}
+    gecos: Compte de déploiement SouverainRecrut
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+# Connexion SSH par clé uniquement
+ssh_pwauth: false
+disable_root: true
+
+# Outils VMware (remontée de l'adresse IP à vmrun) ; le reste est installé par Ansible
+packages:
+  - open-vm-tools
+
+growpart:
+  mode: auto
+  devices: ["/"]

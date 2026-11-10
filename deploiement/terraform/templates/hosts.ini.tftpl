@@ -1,0 +1,10 @@
+# Généré par Terraform (deploiement/terraform) - ne pas modifier à la main
+[${env}]
+${hostname} ansible_host=${ip}
+
+[app:children]
+${env}
+
+[app:vars]
+ansible_user=${admin_user}
+ansible_python_interpreter=/usr/bin/python3

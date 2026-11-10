@@ -1,0 +1,144 @@
+# ======================================================
+# Pipeline de déploiement SouverainRecrut (GitLab CI)
+#
+#   Merge main -> CI Jenkins -> push image Docker Hub -> [ce pipeline]
+#   validation (tag, Docker Hub, signature cosign)
+#     -> staging (auto) -> smoke tests
+#     -> approbation manuelle -> production -> smoke tests
+#
+# Déclenché par Jenkins (trigger API) avec IMAGE_TAG, ou à la main
+# (Build > Pipelines > Run pipeline) en saisissant IMAGE_TAG.
+# L'image n'est jamais reconstruite : la même image (même digest) est
+# déployée en staging puis en production.
+#
+# Variables CI/CD du projet (masquées, jamais dans Git) :
+#   SSH_PRIVATE_KEY         (type File) clé privée de l'utilisateur deploy
+#   ANSIBLE_VAULT_PASSWORD  mot de passe des secrets Ansible Vault
+# ======================================================
+
+workflow:
+  rules:
+    # Un push sur ce dépôt ne déploie rien : seuls Jenkins (trigger),
+    # l'API et l'interface web lancent un déploiement
+    - if: $CI_PIPELINE_SOURCE =~ /^(trigger|pipeline|api|web)$/
+
+variables:
+  IMAGE_REPO: celoma/souverainrecrut-backend
+  IMAGE_TAG:
+    value: ""
+    description: "Tag de l'image à déployer, au format <version>-<sha> (ex. 1.0.0-05b02ac)"
+  # Transmises par Jenkins pour la traçabilité
+  GIT_COMMIT: ""
+  IMAGE_DIGEST: ""
+  JENKINS_BUILD_URL: ""
+
+stages: [validate, staging, production, rollback]
+
+default:
+  image: souverainrecrut-ansible:2.17
+  tags: [souverainrecrut-local]
+
+.ansible:
+  before_script:
+    - mkdir -p ~/.ssh && install -m 600 "$SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    - cd ansible && chmod 755 .   # Ansible ignore ansible.cfg dans un dossier ouvert en écriture à tous
+    - (umask 077 && printf '%s' "$ANSIBLE_VAULT_PASSWORD" > .vault_pass)
+    - ansible --version | head -1
+  after_script:
+    - rm -f ansible/.vault_pass ~/.ssh/id_ed25519
+
+.deploy:
+  extends: .ansible
+  script:
+    - >
+      ansible-playbook -i "inventories/$CI_ENVIRONMENT_NAME" deploy.yml
+      -e image_tag="$IMAGE_TAG"
+      -e git_commit="${GIT_COMMIT:-inconnu}"
+      -e deployed_by="$GITLAB_USER_LOGIN"
+      -e pipeline_url="$CI_PIPELINE_URL"
+
+.smoke:
+  script:
+    - HOST=$(sed -nE 's/.*ansible_host=([0-9.]+).*/\1/p' "ansible/inventories/$ENV/hosts")
+    - echo "Smoke tests sur $ENV ($HOST)"
+    - curl -fsS "http://$HOST:4000/v1/health" && echo
+    - curl -fsS "http://$HOST:4000/v1/ready" && echo
+    - curl -fsS "http://$HOST:4000/v1/info" && echo
+    - code=$(curl -s -o /dev/null -w '%{http_code}' "http://$HOST:4000/v1/users"); echo "GET /v1/users sans jeton -> $code"; test "$code" = 401
+
+# ---------------------------------------------------------------- validation
+valider-image:
+  stage: validate
+  script:
+    - echo "$IMAGE_TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,40}$' || { echo "IMAGE_TAG invalide '$IMAGE_TAG' (attendu <version>-<sha>)"; exit 1; }
+    - >
+      DIGEST=$(curl -fsS "https://hub.docker.com/v2/repositories/$IMAGE_REPO/tags/$IMAGE_TAG"
+      | sed -nE 's/.*"digest":"(sha256:[0-9a-f]{64})".*/\1/p')
+    - test -n "$DIGEST" || { echo "Image $IMAGE_REPO:$IMAGE_TAG introuvable sur Docker Hub"; exit 1; }
+    - echo "Image $IMAGE_REPO:$IMAGE_TAG -> $DIGEST"
+    - if [ -n "$IMAGE_DIGEST" ] && [ "$IMAGE_DIGEST" != "$DIGEST" ]; then echo "Digest différent de celui publié par Jenkins ($IMAGE_DIGEST)"; exit 1; fi
+    # On ne déploie qu'une image signée par Jenkins (clé publique versionnée)
+    - cosign verify --key cosign.pub --insecure-ignore-tlog=true "$IMAGE_REPO@$DIGEST" > /dev/null
+    - echo "Signature cosign vérifiée pour $IMAGE_REPO@$DIGEST"
+    - echo "Commit $GIT_COMMIT - build Jenkins $JENKINS_BUILD_URL"
+
+# ---------------------------------------------------------------- staging
+deploy-staging:
+  stage: staging
+  extends: .deploy
+  needs: [valider-image]
+  resource_group: staging
+  environment:
+    name: staging
+    url: http://192.168.235.129:4000/v1/health
+    deployment_tier: staging
+
+smoke-staging:
+  stage: staging
+  extends: .smoke
+  needs: [deploy-staging]
+  variables: { ENV: staging }
+
+# ---------------------------------------------------------------- production
+# Approbation manuelle : le pipeline reste bloqué tant que personne n'a cliqué
+# sur « Run » ; GitLab trace qui a validé et quand (et deploy.yml l'écrit
+# dans le journal d'audit du serveur via GITLAB_USER_LOGIN).
+deploy-production:
+  stage: production
+  extends: .deploy
+  needs: [smoke-staging]
+  when: manual
+  allow_failure: false
+  resource_group: production
+  environment:
+    name: production
+    url: http://192.168.235.130:4000/v1/health
+    deployment_tier: production
+
+smoke-production:
+  stage: production
+  extends: .smoke
+  needs: [deploy-production]
+  variables: { ENV: production }
+
+# ---------------------------------------------------------------- rollback
+# Retour manuel à la version précédente (le rollback automatique est fait
+# par deploy.yml quand les smoke tests échouent pendant le déploiement)
+.rollback:
+  stage: rollback
+  extends: .ansible
+  when: manual
+  script:
+    - ansible-playbook -i "inventories/$CI_ENVIRONMENT_NAME" rollback.yml -e deployed_by="$GITLAB_USER_LOGIN" -e pipeline_url="$CI_PIPELINE_URL"
+
+rollback-staging:
+  extends: .rollback
+  needs: [deploy-staging]
+  resource_group: staging
+  environment: { name: staging, action: access }
+
+rollback-production:
+  extends: .rollback
+  needs: [deploy-production]
+  resource_group: production
+  environment: { name: production, action: access }

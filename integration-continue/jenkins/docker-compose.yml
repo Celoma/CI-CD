@@ -1,0 +1,50 @@
+# ======================================================
+# Plateforme d'intégration continue : Jenkins + SonarQube
+#   cd integration-continue/jenkins
+#   cp .env.example .env   (puis renseigner les valeurs)
+#   docker compose up -d --build
+# ======================================================
+name: souverainrecrut-ci
+
+services:
+  jenkins:
+    build: .
+    image: souverainrecrut-jenkins:latest
+    container_name: jenkins
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"     # Interface web
+      - "50000:50000"   # Agents Jenkins (JNLP)
+    # Donne à l'utilisateur "jenkins" l'accès au socket Docker de l'hôte
+    # (GID 0 sous Docker Desktop, GID du groupe "docker" sous Linux)
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - sonarqube
+
+  sonarqube:
+    image: sonarqube:26.10.0.133078-community
+    container_name: sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      # Évite d'avoir à modifier vm.max_map_count de l'hôte (Docker Desktop / WSL2)
+      SONAR_SEARCH_JAVAADDITIONALOPTS: "-Dnode.store.allow_mmap=false"
+      # Autorise le webhook vers http://jenkins:8080 (adresse du réseau Docker interne,
+      # bloquée par défaut) : indispensable pour waitForQualityGate dans le pipeline
+      SONAR_VALIDATEWEBHOOKS: "false"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+
+volumes:
+  jenkins_home:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:

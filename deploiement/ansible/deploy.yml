@@ -1,0 +1,29 @@
+# ======================================================
+# Déploiement de l'API Backend à partir d'une image Docker Hub
+#   ansible-playbook -i inventories/staging deploy.yml -e image_tag=1.0.0-05b02ac
+#
+# L'image n'est jamais reconstruite : on récupère celle publiée par Jenkins.
+# Après déploiement, des smoke tests valident le service ; en cas d'échec,
+# la version précédente est automatiquement redéployée (rollback).
+# ======================================================
+- name: Déployer l'API SouverainRecrut
+  hosts: app
+  become: false
+
+  pre_tasks:
+    - name: Vérifier le tag de l'image (version applicative + commit, jamais latest)
+      ansible.builtin.assert:
+        that:
+          - image_tag is defined
+          - image_tag is match('^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,40}$')
+        fail_msg: "image_tag invalide ou absent : attendu <version>-<sha>, par exemple 1.0.0-05b02ac"
+        quiet: true
+
+    - name: Version à déployer
+      ansible.builtin.set_fact:
+        deploy_tag: "{{ image_tag }}"
+        rollback_mode: false
+
+  tasks:
+    - name: Déployer, vérifier et tracer
+      ansible.builtin.import_tasks: tasks/deploy.yml
