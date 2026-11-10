@@ -16,10 +16,13 @@
         src: "{{ app_dir }}/.previous_tag"
       register: previous_file
       when: image_tag is not defined
+      failed_when: false # fichier absent : l'assertion ci-dessous donne un message clair
 
+    # Pas de filtre default() ici : son argument est toujours évalué, et
+    # previous_file.content n'existe pas quand la lecture a été sautée
     - name: Version cible du retour arrière
       ansible.builtin.set_fact:
-        deploy_tag: "{{ image_tag | default(previous_file.content | b64decode | trim) }}"
+        deploy_tag: "{{ image_tag if image_tag is defined else (previous_file.content | default('') | b64decode | trim) }}"
         rollback_mode: true
 
     - name: Vérifier la version cible
