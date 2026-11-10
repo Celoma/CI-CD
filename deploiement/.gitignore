@@ -1,0 +1,9 @@
+# Terraform : état local, plugins et variables propres au poste
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+# Fichiers de déploiement réels
+deployment/.env
+*.env.local
+ansible/.vault_pass

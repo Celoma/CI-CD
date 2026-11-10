@@ -1,0 +1,12 @@
+# Variables communes à tous les environnements
+image_repo: celoma/souverainrecrut-backend
+app_dir: /opt/souverainrecrut
+compose_project: souverainrecrut
+api_port: 4000
+api_version: v1
+postgres_db: souverainrecrut
+postgres_user: souverainrecrut
+# Traçabilité (renseignées par le pipeline GitLab)
+git_commit: "inconnu"
+deployed_by: "{{ lookup('env', 'USER') | default('manuel', true) }}"
+pipeline_url: ""

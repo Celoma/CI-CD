@@ -1,0 +1,136 @@
+# Tâches communes à deploy.yml et rollback.yml (variable d'entrée : deploy_tag)
+
+- name: Lire la version actuellement déployée
+  ansible.builtin.slurp:
+    src: "{{ app_dir }}/.current_tag"
+  register: current_file
+  failed_when: false
+
+- name: Mémoriser la version en place (cible d'un retour arrière)
+  ansible.builtin.set_fact:
+    current_tag: "{{ (current_file.content | default('') | b64decode | trim) or '' }}"
+
+- name: Copier le fichier Docker Compose
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../deployment/docker-compose.yml"
+    dest: "{{ app_dir }}/docker-compose.yml"
+    mode: "0640"
+
+- name: Déployer, puis valider par des smoke tests
+  block:
+    - name: Générer la configuration de l'environnement (.env, secrets compris)
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+
+    - name: Récupérer l'image {{ image_repo }}:{{ deploy_tag }} depuis Docker Hub
+      ansible.builtin.command: docker compose pull backend postgres
+      args: { chdir: "{{ app_dir }}" }
+      changed_when: true
+
+    - name: Démarrer PostgreSQL et attendre qu'il soit prêt
+      ansible.builtin.command: docker compose up -d --wait postgres
+      args: { chdir: "{{ app_dir }}" }
+      changed_when: true
+
+    - name: Appliquer les migrations Prisma (prisma migrate deploy)
+      ansible.builtin.command: docker compose run --rm migrate
+      args: { chdir: "{{ app_dir }}" }
+      register: migrate
+      changed_when: "'No pending migrations' not in migrate.stdout"
+
+    - name: Démarrer l'API et attendre son healthcheck
+      ansible.builtin.command: docker compose up -d --wait --wait-timeout 120 --remove-orphans backend
+      args: { chdir: "{{ app_dir }}" }
+      changed_when: true
+
+    - name: "Smoke test : GET /{{ api_version }}/health"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/health"
+        status_code: 200
+      register: health
+      retries: 10
+      delay: 3
+      until: health.status == 200
+
+    - name: "Smoke test : GET /{{ api_version }}/ready (connexion à PostgreSQL)"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/ready"
+        status_code: 200
+      register: ready
+      retries: 10
+      delay: 3
+      until: ready.status == 200
+
+  rescue:
+    - name: Mémoriser la version en échec
+      ansible.builtin.set_fact:
+        failed_tag: "{{ deploy_tag }}"
+        auto_rollback: "{{ not rollback_mode and current_tag not in ['', deploy_tag] }}"
+
+    - name: Journaliser l'échec
+      ansible.builtin.shell: >
+        echo "$(date -u +%FT%TZ) env={{ app_env }} tag={{ failed_tag }} statut=ECHEC
+        commit={{ git_commit }} par={{ deployed_by }} pipeline={{ pipeline_url }}" >> {{ app_dir }}/deployments.log
+      changed_when: true
+
+    - name: Rollback automatique vers la version précédente
+      when: auto_rollback | bool
+      block:
+        - name: Revenir à la version {{ current_tag }}
+          ansible.builtin.set_fact:
+            deploy_tag: "{{ current_tag }}"
+
+        - name: Restaurer la configuration de la version précédente
+          ansible.builtin.template:
+            src: env.j2
+            dest: "{{ app_dir }}/.env"
+            mode: "0600"
+
+        - name: Redémarrer l'API sur la version précédente
+          ansible.builtin.command: docker compose up -d --wait --wait-timeout 120 backend
+          args: { chdir: "{{ app_dir }}" }
+          changed_when: true
+
+        - name: Journaliser le rollback
+          ansible.builtin.shell: >
+            echo "$(date -u +%FT%TZ) env={{ app_env }} tag={{ current_tag }} statut=ROLLBACK-AUTO
+            depuis={{ failed_tag }} pipeline={{ pipeline_url }}" >> {{ app_dir }}/deployments.log
+          changed_when: true
+
+    - name: Arrêter le déploiement en échec
+      ansible.builtin.fail:
+        msg: >-
+          Le déploiement de {{ failed_tag }} sur {{ app_env }} a échoué{{
+          ' ; retour automatique à ' ~ current_tag if (auto_rollback | bool) else '' }}.
+
+- name: Relever le digest de l'image déployée
+  ansible.builtin.command: docker image inspect --format "{{ '{{' }}index .RepoDigests 0{{ '}}' }}" {{ image_repo }}:{{ deploy_tag }}
+  register: digest
+  changed_when: false
+
+- name: Enregistrer la version précédente
+  ansible.builtin.copy:
+    content: "{{ current_tag }}\n"
+    dest: "{{ app_dir }}/.previous_tag"
+    mode: "0640"
+  when: current_tag != '' and current_tag != deploy_tag
+
+- name: Enregistrer la version déployée
+  ansible.builtin.copy:
+    content: "{{ deploy_tag }}\n"
+    dest: "{{ app_dir }}/.current_tag"
+    mode: "0640"
+
+- name: "Trace d'audit : qui, quand, quelle version, quel digest"
+  ansible.builtin.shell: >
+    echo "$(date -u +%FT%TZ) env={{ app_env }} tag={{ deploy_tag }}
+    statut={{ 'ROLLBACK' if rollback_mode else 'OK' }} digest={{ digest.stdout | regex_replace('^.*@', '') }}
+    precedent={{ current_tag or 'aucun' }} commit={{ git_commit }} par={{ deployed_by }}
+    pipeline={{ pipeline_url }}" >> {{ app_dir }}/deployments.log
+  changed_when: true
+
+- name: Résumé du déploiement
+  ansible.builtin.debug:
+    msg: "{{ app_env }} : {{ image_repo }}:{{ deploy_tag }} ({{ digest.stdout | regex_replace('^.*@', '') }}) - précédente : {{ current_tag or 'aucune' }}"

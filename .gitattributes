@@ -9,3 +9,6 @@ Dockerfile         text eol=lf
 .dockerignore      text eol=lf
 .env.example       text eol=lf
 jenkins/plugins.txt text eol=lf
+
+# Déploiement : fichiers exécutés sous Linux (VM, conteneurs, runner GitLab)
+deploiement/** text=auto eol=lf

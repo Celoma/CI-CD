@@ -1,0 +1,78 @@
+# ======================================================
+# Déploiement SouverainRecrut : API Backend + PostgreSQL
+# Les valeurs viennent du fichier .env généré par Ansible (modèle : .env.example).
+# L'image Backend est celle publiée sur Docker Hub par Jenkins : elle n'est
+# jamais reconstruite sur le serveur.
+#
+#   docker compose pull
+#   docker compose up -d --wait postgres
+#   docker compose run --rm migrate          # migrations Prisma
+#   docker compose up -d --wait backend
+#   docker compose ps / docker compose logs -f backend
+# ======================================================
+name: ${COMPOSE_PROJECT_NAME:-souverainrecrut}
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-database-url: &database-url "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+
+  # Migrations Prisma : conteneur ponctuel lancé avant chaque démarrage de l'API
+  migrate:
+    image: ${IMAGE_REPO}:${IMAGE_TAG}
+    profiles: [tools]
+    command: ["node_modules/.bin/prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    logging: *logging
+
+  backend:
+    image: ${IMAGE_REPO}:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: ${API_PORT:-4000}
+      API_VERSION: ${API_VERSION:-v1}
+      FRONTEND_URL: ${FRONTEND_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: *database-url
+    ports:
+      - "${API_PORT:-4000}:${API_PORT:-4000}"
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT}/$${API_VERSION}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    logging: *logging
+
+volumes:
+  postgres_data:
+
+networks:
+  backend:

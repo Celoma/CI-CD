@@ -1,0 +1,33 @@
+# ======================================================
+# Retour arrière manuel vers la version précédemment déployée
+#   ansible-playbook -i inventories/production rollback.yml
+#   ansible-playbook -i inventories/production rollback.yml -e image_tag=1.0.0-05b02ac   (version précise)
+#
+# Seule l'image applicative change : le schéma de base de données n'est pas
+# restauré (les migrations Prisma doivent rester rétrocompatibles).
+# ======================================================
+- name: Revenir à la version précédente de l'API
+  hosts: app
+  become: false
+
+  pre_tasks:
+    - name: Lire la version précédente enregistrée sur le serveur
+      ansible.builtin.slurp:
+        src: "{{ app_dir }}/.previous_tag"
+      register: previous_file
+      when: image_tag is not defined
+
+    - name: Version cible du retour arrière
+      ansible.builtin.set_fact:
+        deploy_tag: "{{ image_tag | default(previous_file.content | b64decode | trim) }}"
+        rollback_mode: true
+
+    - name: Vérifier la version cible
+      ansible.builtin.assert:
+        that: deploy_tag is match('^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,40}$')
+        fail_msg: "Aucune version précédente valide trouvée"
+        quiet: true
+
+  tasks:
+    - name: Redéployer, vérifier et tracer
+      ansible.builtin.import_tasks: tasks/deploy.yml
