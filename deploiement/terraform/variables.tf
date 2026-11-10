@@ -36,3 +36,9 @@ variable "vms" {
     production = { cpus = 2, memory = 2048 }
   }
 }
+
+variable "bash_path" {
+  description = "Git Bash (les scripts utilisent cygpath et vmrun.exe) : appelé explicitement pour ne pas tomber sur le bash de WSL depuis PowerShell"
+  type        = string
+  default     = "C:/Program Files/Git/bin/bash.exe"
+}

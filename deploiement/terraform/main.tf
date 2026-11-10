@@ -35,10 +35,11 @@ resource "terraform_data" "vm" {
     vmx    = local.cloud_init[each.key].vmx
     vmrun  = var.vmrun_path
     script = abspath("${path.module}/scripts/vm-destroy.sh")
+    bash   = var.bash_path
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    interpreter = [var.bash_path, "-c"]
     command     = "'${abspath("${path.module}/scripts/vm-create.sh")}'"
     environment = {
       VMRUN        = var.vmrun_path
@@ -54,7 +55,7 @@ resource "terraform_data" "vm" {
 
   provisioner "local-exec" {
     when        = destroy
-    interpreter = ["bash", "-c"]
+    interpreter = [self.input.bash, "-c"]
     command     = "'${self.input.script}'"
     environment = {
       VMRUN = self.input.vmrun
@@ -66,7 +67,7 @@ resource "terraform_data" "vm" {
 # Adresse IP attribuée par le DHCP du réseau NAT de Workstation
 data "external" "ip" {
   for_each   = var.vms
-  program    = ["bash", "${path.module}/scripts/vm-ip.sh"]
+  program    = [var.bash_path, "${path.module}/scripts/vm-ip.sh"]
   query      = { vmx = local.cloud_init[each.key].vmx, vmrun = var.vmrun_path }
   depends_on = [terraform_data.vm]
 }
@@ -88,7 +89,7 @@ resource "local_file" "inventory" {
 # Clés d'hôte SSH des VM (fichier known_hosts utilisé par Ansible et GitLab CI)
 data "external" "hostkeys" {
   for_each = var.vms
-  program  = ["bash", "${path.module}/scripts/vm-hostkeys.sh"]
+  program  = [var.bash_path, "${path.module}/scripts/vm-hostkeys.sh"]
   query    = { ip = data.external.ip[each.key].result.ip }
 }
 
