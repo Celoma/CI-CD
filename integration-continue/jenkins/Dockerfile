@@ -41,6 +41,23 @@ RUN curl -fsSL -o /tmp/trivy.tgz \
     && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
     && rm /tmp/trivy.tgz
 
+# --- Syft (SBOM CycloneDX de l'image) ---
+ARG SYFT_VERSION=1.18.1
+RUN cd /tmp \
+    && curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+    && curl -fsSL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt" \
+       | grep " syft_${SYFT_VERSION}_linux_amd64.tar.gz$" | sha256sum -c - \
+    && tar -xzf "syft_${SYFT_VERSION}_linux_amd64.tar.gz" -C /usr/local/bin syft \
+    && rm "syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+
+# --- cosign (signature des images publiées) ---
+ARG COSIGN_VERSION=2.4.1
+RUN curl -fsSLo /usr/local/bin/cosign \
+       "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+    && curl -fsSL "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign_checksums.txt" \
+       | grep ' cosign-linux-amd64$' | sed 's#cosign-linux-amd64#/usr/local/bin/cosign#' | sha256sum -c - \
+    && chmod +x /usr/local/bin/cosign
+
 USER jenkins
 
 # --- Plugins Jenkins ---

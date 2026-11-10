@@ -11,7 +11,10 @@
 //  7. Quality Gate ....... attente du verdict SonarQube (échec => pipeline arrêté)
 //  8. Docker Build ....... image backend taguée <version>-<sha>
 //  9. Trivy .............. scan de l'image (CRITICAL corrigeable => échec)
-// 10. Push Docker Hub .... publication (branches Dev et main), uniquement si tout est vert
+// 10. SBOM ............... inventaire CycloneDX des composants de l'image (Syft), archivé
+// 11. Push Docker Hub .... publication + signature cosign du digest (branches Dev et main)
+// 12. Déploiement ........ (main uniquement) déclenche le pipeline GitLab :
+//                          staging automatique, puis production sur approbation
 // ======================================================
 pipeline {
     agent any
@@ -31,6 +34,8 @@ pipeline {
         // Base de vulnérabilités Trivy conservée entre les builds
         TRIVY_CACHE_DIR       = "${JENKINS_HOME}/.cache/trivy"
         REPORTS               = "${WORKSPACE}/reports"
+        // Projet GitLab de déploiement (Celoma/souverainrecrut-deploiement)
+        GITLAB_PROJECT_ID     = '88742010'
     }
 
     stages {
@@ -146,6 +151,18 @@ pipeline {
             }
         }
 
+        stage('SBOM') {
+            steps {
+                // Inventaire des composants de l'image (un SBOM par version livrée)
+                sh '''
+                    syft scan "docker:$IMAGE:$IMAGE_TAG" -q \
+                      -o cyclonedx-json="$REPORTS/sbom.cdx.json" -o table="$REPORTS/sbom.txt"
+                    node -e 'const b=require(process.argv[1]); console.log("SBOM CycloneDX : " + b.components.length + " composants")' \
+                      "$REPORTS/sbom.cdx.json"
+                '''
+            }
+        }
+
         stage('Push Docker Hub') {
             when {
                 anyOf { branch 'Dev'; branch 'main' }
@@ -160,11 +177,49 @@ pipeline {
                     docker push "$IMAGE:$IMAGE_TAG"
                     docker tag  "$IMAGE:$IMAGE_TAG" "$IMAGE:latest"
                     docker push "$IMAGE:latest"
+                    # Digest publié : identifiant immuable de l'image déployée en staging puis en production
+                    docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG" \
+                      | sed 's/.*@//' > "$REPORTS/image-digest.txt"
                 '''
+                // Signature du digest : GitLab ne déploie qu'une image signée par cette clé
+                withCredentials([string(credentialsId: 'cosign-key', variable: 'COSIGN_KEY_B64'),
+                                 string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
+                    sh '''
+                        DIGEST=$(cat "$REPORTS/image-digest.txt")
+                        COSIGN_PRIVATE_KEY=$(printf '%s' "$COSIGN_KEY_B64" | base64 -d) \
+                          cosign sign --yes --tlog-upload=false --key env://COSIGN_PRIVATE_KEY "$IMAGE@$DIGEST"
+                        echo "Image signée : $IMAGE@$DIGEST"
+                    '''
+                }
+                script {
+                    env.IMAGE_DIGEST = readFile("${env.REPORTS}/image-digest.txt").trim()
+                }
             }
             post {
                 always {
                     sh 'docker logout || true'
+                }
+            }
+        }
+
+        stage('Déploiement (GitLab)') {
+            when { branch 'main' }
+            steps {
+                // Pipeline GitLab : staging automatique, puis production après approbation manuelle
+                withCredentials([string(credentialsId: 'gitlab-trigger-token', variable: 'GITLAB_TRIGGER_TOKEN')]) {
+                    sh '''
+                        curl -fsS -X POST \
+                          -F "token=$GITLAB_TRIGGER_TOKEN" \
+                          -F "ref=main" \
+                          -F "variables[IMAGE_TAG]=$IMAGE_TAG" \
+                          -F "variables[IMAGE_DIGEST]=$IMAGE_DIGEST" \
+                          -F "variables[GIT_COMMIT]=$GIT_COMMIT" \
+                          -F "variables[JENKINS_BUILD_URL]=$BUILD_URL" \
+                          "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/trigger/pipeline" \
+                          > "$REPORTS/gitlab-pipeline.json"
+                        node -e 'const p=require(process.argv[1]); console.log("Pipeline de déploiement GitLab #" + p.id + " : " + p.web_url)' \
+                          "$REPORTS/gitlab-pipeline.json"
+                    '''
                 }
             }
         }
@@ -188,7 +243,7 @@ pipeline {
             echo "Image publiée / validée : ${env.IMAGE}:${env.IMAGE_TAG}"
         }
         failure {
-            echo 'Pipeline en échec : consulter l\'étape en rouge (tests, Quality Gate ou Trivy)'
+            echo 'Pipeline en échec : consulter l\'étape en rouge (tests, Quality Gate, Trivy, signature ou déploiement)'
         }
     }
 }

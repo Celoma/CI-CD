@@ -49,6 +49,23 @@ credentials:
               id: "sonar-token"
               description: "SonarQube - token d'analyse"
               secret: "${SONAR_TOKEN}"
+          # cosign : clé privée de signature (PEM encodé en base64) et son mot de passe
+          - string:
+              scope: GLOBAL
+              id: "cosign-key"
+              description: "cosign - clé privée de signature des images (base64)"
+              secret: "${COSIGN_KEY_B64}"
+          - string:
+              scope: GLOBAL
+              id: "cosign-password"
+              description: "cosign - mot de passe de la clé"
+              secret: "${COSIGN_PASSWORD}"
+          # GitLab : jeton de déclenchement du pipeline de déploiement
+          - string:
+              scope: GLOBAL
+              id: "gitlab-trigger-token"
+              description: "GitLab - déclenchement du pipeline de déploiement"
+              secret: "${GITLAB_TRIGGER_TOKEN}"
 
 # Job multibranche : un pipeline par branche du dépôt Git (dont Dev).
 # Le scan périodique (toutes les 2 minutes) détecte les nouveaux commits
