@@ -2,6 +2,7 @@
 # Crée une VM par clonage complet de la VM modèle, lui injecte sa
 # configuration cloud-init (guestinfo) puis la démarre.
 # Variables : VMRUN TEMPLATE_VMX VMX VM_NAME CPUS MEMORY METADATA USERDATA
+#             DISPLAY_MODE (gui par défaut : fenêtre VMware ; nogui : arrière-plan)
 set -euo pipefail
 vmrun() { MSYS_NO_PATHCONV=1 "$VMRUN" -T ws "$@"; }
 win() { cygpath -w "$1"; }
@@ -24,5 +25,5 @@ guestinfo.userdata = "$USERDATA"
 guestinfo.userdata.encoding = "base64"
 CONF
 
-echo "> Démarrage de $VM_NAME"
-vmrun start "$(win "$VMX")" nogui
+echo "> Démarrage de $VM_NAME (${DISPLAY_MODE:-gui})"
+vmrun start "$(win "$VMX")" "${DISPLAY_MODE:-gui}"

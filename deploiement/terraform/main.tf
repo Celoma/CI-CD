@@ -48,6 +48,7 @@ resource "terraform_data" "vm" {
       VM_NAME      = "souverainrecrut-${each.key}"
       CPUS         = each.value.cpus
       MEMORY       = each.value.memory
+      DISPLAY_MODE = var.vm_display
       METADATA     = base64encode(local.cloud_init[each.key].metadata)
       USERDATA     = base64encode(local.cloud_init[each.key].user_data)
     }

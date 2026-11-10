@@ -42,3 +42,13 @@ variable "bash_path" {
   type        = string
   default     = "C:/Program Files/Git/bin/bash.exe"
 }
+
+variable "vm_display" {
+  description = "Démarrage des VM : gui (fenêtre VMware Workstation, console accessible) ou nogui (arrière-plan)"
+  type        = string
+  default     = "gui"
+  validation {
+    condition     = contains(["gui", "nogui"], var.vm_display)
+    error_message = "vm_display doit valoir gui ou nogui."
+  }
+}
