@@ -41,7 +41,7 @@ default:
 .ansible:
   before_script:
     - mkdir -p ~/.ssh && install -m 600 "$SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
-    - cd ansible
+    - cd ansible && chmod 755 .   # Ansible ignore ansible.cfg dans un dossier ouvert en écriture à tous
     - (umask 077 && printf '%s' "$ANSIBLE_VAULT_PASSWORD" > .vault_pass)
     - ansible --version | head -1
   after_script:

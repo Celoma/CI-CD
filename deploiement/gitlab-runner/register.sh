@@ -12,4 +12,4 @@ docker exec gitlab-runner gitlab-runner register --non-interactive \
   --docker-image souverainrecrut-ansible:2.17 \
   --docker-pull-policy if-not-present \
   --description "souverainrecrut-local"
-docker exec gitlab-runner gitlab-runner verify
+docker exec gitlab-runner gitlab-runner verify 2>&1 | grep -q "is valid" && echo "Runner enregistré et valide"
