@@ -28,6 +28,8 @@ La même image (même digest) est déployée en staging puis en production. Elle
 cd terraform && cp terraform.tfvars.example terraform.tfvars   # adapter les chemins
 terraform init && terraform plan -out=tfplan && terraform apply tfplan
 terraform output
+# Les VM s'ouvrent dans VMware Workstation (vm_display = "gui", ou "nogui" pour l'arrière-plan).
+# Terraform ne les démarre qu'à leur création : après un redémarrage du poste, ./scripts/vm-start.sh
 
 # 2. Préparation des serveurs (Ansible tourne dans un conteneur)
 cd ../ansible
@@ -59,3 +61,26 @@ et `deploy.yml` l'écrit dans `/opt/souverainrecrut/deployments.log` sur le serv
   (`-e image_tag=<tag>` pour une version précise).
 
 Seule l'image change : le schéma de base n'est pas restauré, les migrations Prisma doivent rester rétrocompatibles.
+
+Testé sur staging et en production : échec volontaire avec rollback automatique, rollback vers une version précise,
+rollback sans argument (version lue dans `/opt/souverainrecrut/.previous_tag`).
+
+## Sauvegarde et restauration de la base
+
+Avant chaque migration, `deploy.yml` sauvegarde la base (`pg_dump`, format custom) dans `/opt/souverainrecrut/backups/`
+(droits 600, `backup_retention` = 10 dernières). Le nom du fichier est inscrit dans le journal d'audit.
+
+```bash
+./run-ansible.sh ansible-playbook -i inventories/staging restore-db.yml                       # liste les sauvegardes
+./run-ansible.sh ansible-playbook -i inventories/staging restore-db.yml -e backup=<fichier.dump>
+```
+
+La restauration arrête l'API, restaure la base (`pg_restore --clean`, en une transaction), redémarre l'API et vérifie
+`/v1/ready`. Pour annuler une migration : `rollback.yml` puis `restore-db.yml` avec la sauvegarde faite avant elle.
+Les données écrites après la sauvegarde sont perdues.
+
+## Accès console aux VM
+
+Les VM s'ouvrent dans VMware Workstation. Le compte `deploy` n'a pas de mot de passe (connexion par clé SSH).
+Sur la production, un mot de passe local a été défini à la main pour la console uniquement (`sudo passwd deploy`) ;
+le SSH par mot de passe reste interdit. Pour le retirer : `sudo passwd -l deploy`.

@@ -1,3 +1,9 @@
+> **Document historique.** Il décrit la première version de la chaîne (branche `feature/jenkins-dockerhub-cicd` :
+> tags `<branche>-<sha>`, images frontend, déploiement local par Jenkins dans un dossier `deploy/`).
+> Cette version a été remplacée. La chaîne actuelle est décrite dans [devops.md](devops.md),
+> [deploiement/README.md](../../deploiement/README.md) et le rapport `integration-continue/reports/Rapport_TP_CICD.docx` :
+> Jenkinsfile dans `integration-continue/`, tags `<version>-<sha>`, déploiement par GitLab CI/CD et Ansible sur des VM.
+
 <div align="center">
 
 <br><br><br>
