@@ -186,8 +186,14 @@ pipeline {
                                  string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
                     sh '''
                         DIGEST=$(cat "$REPORTS/image-digest.txt")
-                        COSIGN_PRIVATE_KEY=$(printf '%s' "$COSIGN_KEY_B64" | base64 -d) \
-                          cosign sign --yes --tlog-upload=false --key env://COSIGN_PRIVATE_KEY "$IMAGE@$DIGEST"
+                        # Clé décodée dans un fichier temporaire, sans trace (set +x) :
+                        # la valeur décodée n'est pas masquée par Jenkins
+                        set +x
+                        KEY_FILE=$(mktemp)
+                        trap 'rm -f "$KEY_FILE"' EXIT
+                        printf '%s' "$COSIGN_KEY_B64" | base64 -d > "$KEY_FILE"
+                        echo "+ cosign sign --yes --tlog-upload=false --key <cosign-key> $IMAGE@$DIGEST"
+                        cosign sign --yes --tlog-upload=false --key "$KEY_FILE" "$IMAGE@$DIGEST"
                         echo "Image signée : $IMAGE@$DIGEST"
                     '''
                 }
